@@ -110,11 +110,39 @@ class LidlCrawler:
         try:
             logger.info(f"Navigating to: {url}")
             
+            # Pre-set cookies to bypass consent banner
+            try:
+                logger.info("Setting OneTrust cookie to bypass consent...")
+                await self.page.context.add_cookies([{
+                    'name': 'OptanonAlertBoxClosed',
+                    'value': str(int(asyncio.get_event_loop().time())),
+                    'domain': 'www.lidl.de',
+                    'path': '/',
+                    'expires': int(asyncio.get_event_loop().time()) + (365 * 24 * 60 * 60)
+                }])
+                logger.info("OneTrust cookie set")
+            except Exception as e:
+                logger.debug(f"Could not pre-set cookie: {str(e)}")
+            
             timeout = self.navigation_config.get("page_load_timeout", 60) * 1000
-            await self.page.goto(url, wait_until="networkidle", timeout=timeout)
+            
+            # Try with wait_until="domcontentloaded" first (faster, more reliable)
+            try:
+                logger.info("Navigating with domcontentloaded...")
+                await self.page.goto(url, wait_until="domcontentloaded", timeout=timeout)
+                logger.info("Page loaded (domcontentloaded)")
+            except Exception as e:
+                logger.warning(f"domcontentloaded failed, trying load event: {str(e)}")
+                try:
+                    await self.page.goto(url, wait_until="load", timeout=timeout)
+                    logger.info("Page loaded (load)")
+                except Exception as e2:
+                    logger.warning(f"load failed, trying commit: {str(e2)}")
+                    await self.page.goto(url, wait_until="commit", timeout=timeout)
+                    logger.info("Page loaded (commit)")
             
             # Wait for page to be fully loaded
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
             
             # Handle cookie consent if present
             await self._handle_cookie_consent()
@@ -127,31 +155,57 @@ class LidlCrawler:
             return False
     
     async def _handle_cookie_consent(self):
-        """Handle cookie consent popups"""
+        """Handle cookie consent popups - Try to accept if still visible"""
         try:
-            # Common cookie consent selectors
-            selectors = [
-                "button:has-text('Accept')",
-                "button:has-text('Akzeptieren')",
-                "button:has-text('Alle akzeptieren')",
-                "#onetrust-accept-btn-handler",
-                ".cookie-consent-accept"
+            await asyncio.sleep(1)
+            
+            # Try multiple methods to close the consent banner
+            methods = [
+                # Method 1: JavaScript direct access
+                lambda: self.page.evaluate(
+                    """() => {
+                        const btn = document.querySelector('#onetrust-accept-btn-handler');
+                        if (btn) { btn.click(); return true; }
+                        return false;
+                    }"""
+                ),
+                # Method 2: Try reject button (simpler, less tracking)
+                lambda: self.page.evaluate(
+                    """() => {
+                        const btn = document.querySelector('#onetrust-reject-all-handler');
+                        if (btn) { btn.click(); return true; }
+                        return false;
+                    }"""
+                ),
+                # Method 3: Playwright click
+                lambda: self._try_click_selector("#onetrust-accept-btn-handler"),
             ]
             
-            for selector in selectors:
+            for method in methods:
                 try:
-                    button = await self.page.wait_for_selector(
-                        selector, timeout=3000, state="visible"
-                    )
-                    if button:
-                        await button.click()
+                    result = await method()
+                    if result:
                         logger.info("Cookie consent accepted")
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(2)
                         return
-                except:
+                except Exception as e:
+                    logger.debug(f"Method failed: {str(e)}")
                     continue
+            
+            logger.debug("No cookie consent popup found")
         except Exception as e:
-            logger.debug(f"No cookie consent found or already accepted: {str(e)}")
+            logger.debug(f"Error handling cookie consent: {str(e)}")
+    
+    async def _try_click_selector(self, selector: str) -> bool:
+        """Try to click a selector"""
+        try:
+            button = await self.page.query_selector(selector)
+            if button and await button.is_visible():
+                await button.click()
+                return True
+        except:
+            pass
+        return False
     
     async def scroll_page(self, scroll_pause: Optional[float] = None):
         """
@@ -196,7 +250,7 @@ class LidlCrawler:
     
     async def click_element(self, selector: str) -> bool:
         """
-        Click on element by selector.
+        Click on element by selector. Also tries parent elements if direct click fails.
         
         Args:
             selector: CSS selector for element
@@ -205,9 +259,36 @@ class LidlCrawler:
             True if successful, False otherwise
         """
         try:
-            await self.page.click(selector)
+            element = await self.page.query_selector(selector)
+            if not element:
+                logger.debug(f"Element not found: {selector}")
+                return False
+            
+            # Check if element is visible
+            is_visible = await element.is_visible()
+            if not is_visible:
+                logger.debug(f"Element not visible: {selector}")
+                # Try clicking parent
+                return await self.page.evaluate(
+                    f"""() => {{
+                        const el = document.querySelector('{selector}');
+                        if (!el) return false;
+                        const clickable = el.closest('a, button, [role=button], .clickable');
+                        if (clickable) {{
+                            clickable.click();
+                            return true;
+                        }}
+                        el.click();
+                        return true;
+                    }}"""
+                )
+            
+            # Direct click
+            await element.click()
             await self.throttle()
+            logger.info(f"Successfully clicked: {selector}")
             return True
+            
         except Exception as e:
             logger.error(f"Failed to click element {selector}: {str(e)}")
             return False

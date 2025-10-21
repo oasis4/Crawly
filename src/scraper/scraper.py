@@ -75,6 +75,39 @@ class LidlScraper:
                 if not success:
                     raise Exception("Failed to navigate to target URL")
                 
+                logger.info("Waiting for page to stabilize...")
+                await asyncio.sleep(3)
+                
+                # Try to click on first category or filter to load products
+                logger.info("Looking for product categories or filters...")
+                category_selectors = [
+                    # Lidl specific selectors for category overview
+                    ".ACategoryOverviewSlider__Image",  # Category overview images
+                    ".TheImage.block-span",  # The image span container
+                    "img[src*='Cat_Overview']",  # Category overview images
+                    ".ACategoryOverviewSlider a",  # Links in category slider
+                    "a.category-link",
+                    "a[href*='/c/']",  # Lidl category links
+                    "button[aria-label*='Category']",
+                    ".product-grid-box",  # Fallback: try to find products directly
+                ]
+                
+                category_clicked = False
+                for selector in category_selectors:
+                    try:
+                        logger.info(f"Trying selector: {selector}")
+                        if await crawler.click_element(selector):
+                            logger.info(f"Clicked on category with selector: {selector}")
+                            category_clicked = True
+                            await asyncio.sleep(3)  # Wait for products to load
+                            break
+                    except Exception as e:
+                        logger.debug(f"Selector {selector} failed: {str(e)}")
+                        continue
+                
+                if not category_clicked:
+                    logger.warning("Could not click on category, proceeding with main page products")
+                
                 page_count = 0
                 
                 while True:
@@ -105,15 +138,19 @@ class LidlScraper:
                         logger.info(f"Reached maximum page limit: {self.max_pages}")
                         break
                     
-                    # Navigate to next page
+                    # Navigate to next page by clicking "Weitere Produkte laden" button
                     next_selector = self.scraper_config.get("selectors", {}).get(
-                        "pagination_next", ".pagination__next"
+                        "pagination_next", ".s-load-more__button"
                     )
                     
+                    logger.info(f"Looking for next page button: {next_selector}")
                     if await crawler.has_next_page(next_selector):
+                        logger.info("Clicking 'Weitere Produkte laden' button...")
                         await crawler.click_element(next_selector)
-                        await crawler.throttle()
+                        await asyncio.sleep(2)  # Wait for products to load
+                        await crawler.scroll_page()  # Scroll to ensure all content is loaded
                     else:
+                        logger.info("No more 'Weitere Produkte laden' button found")
                         break
             
             # Save products to database
@@ -139,6 +176,15 @@ class LidlScraper:
             error_msg = f"Scraping failed: {str(e)}"
             logger.error(error_msg)
             errors.append(error_msg)
+            
+            # Save any products collected before the error occurred
+            if all_products:
+                try:
+                    logger.info(f"Saving {len(all_products)} products collected before error...")
+                    stats = self._save_products(all_products, run_id)
+                    logger.info(f"Saved {stats['new_products']} new and {stats['updated_products']} updated products")
+                except Exception as save_error:
+                    logger.error(f"Failed to save products: {str(save_error)}")
             
             # Update scraper run status
             db = SessionLocal()
@@ -171,65 +217,93 @@ class LidlScraper:
             "skipped_products": 0
         }
         
+        if not products:
+            logger.warning("No products to save")
+            db.close()
+            return stats
+        
+        logger.info(f"Attempting to save {len(products)} products to database")
+        
         try:
             for product_data in products:
                 sku = product_data.get("sku")
                 
                 if not sku:
-                    logger.warning("Product without SKU, skipping")
+                    logger.warning(f"Product without SKU: {product_data.get('product_name')}, skipping")
                     stats["skipped_products"] += 1
                     continue
+                
+                # Ensure all strings are properly encoded
+                product_name = product_data.get("product_name", "")
+                if isinstance(product_name, str):
+                    # Encode and decode to ensure UTF-8 compliance
+                    product_name = product_name.encode('utf-8', errors='replace').decode('utf-8')
                 
                 # Check if product exists
                 existing_product = db.query(Product).filter(Product.sku == sku).first()
                 
-                if existing_product:
-                    # Update existing product
-                    existing_product.name = product_data.get("product_name", existing_product.name)
-                    existing_product.price = product_data.get("price", existing_product.price)
-                    existing_product.discount = product_data.get("discount")
-                    existing_product.image_url = product_data.get("image_url")
-                    existing_product.last_scraped = datetime.utcnow()
-                    existing_product.last_updated = datetime.utcnow()
+                try:
+                    if existing_product:
+                        # Update existing product
+                        existing_product.name = product_name or existing_product.name
+                        existing_product.price = product_data.get("price", existing_product.price)
+                        existing_product.original_price = product_data.get("original_price")
+                        existing_product.lidl_product_id = product_data.get("lidl_product_id")
+                        existing_product.discount = product_data.get("discount")
+                        existing_product.image_url = product_data.get("image_url")
+                        existing_product.last_scraped = datetime.utcnow()
+                        existing_product.last_updated = datetime.utcnow()
+                        
+                        product_id = existing_product.id
+                        stats["updated_products"] += 1
+                        logger.debug(f"Updated product: {sku}")
+                        
+                    else:
+                        # Create new product
+                        new_product = Product(
+                            sku=sku,
+                            name=product_name or "",
+                            price=product_data.get("price", 0.0),
+                            original_price=product_data.get("original_price"),
+                            lidl_product_id=product_data.get("lidl_product_id"),
+                            discount=product_data.get("discount"),
+                            image_url=product_data.get("image_url"),
+                            first_seen=datetime.utcnow(),
+                            last_scraped=datetime.utcnow()
+                        )
+                        db.add(new_product)
+                        db.flush()
+                        
+                        product_id = new_product.id
+                        stats["new_products"] += 1
+                        logger.debug(f"Created new product: {sku}")
                     
-                    product_id = existing_product.id
-                    stats["updated_products"] += 1
-                    
-                else:
-                    # Create new product
-                    new_product = Product(
+                    # Add to history
+                    history_entry = ProductHistory(
+                        product_id=product_id,
                         sku=sku,
-                        name=product_data.get("product_name", ""),
+                        lidl_product_id=product_data.get("lidl_product_id"),
+                        name=product_name or "",
                         price=product_data.get("price", 0.0),
+                        original_price=product_data.get("original_price"),
                         discount=product_data.get("discount"),
                         image_url=product_data.get("image_url"),
-                        first_seen=datetime.utcnow(),
-                        last_scraped=datetime.utcnow()
+                        scraped_at=datetime.utcnow(),
+                        scraper_run_id=run_id
                     )
-                    db.add(new_product)
-                    db.flush()
+                    db.add(history_entry)
                     
-                    product_id = new_product.id
-                    stats["new_products"] += 1
-                
-                # Add to history
-                history_entry = ProductHistory(
-                    product_id=product_id,
-                    sku=sku,
-                    name=product_data.get("product_name", ""),
-                    price=product_data.get("price", 0.0),
-                    discount=product_data.get("discount"),
-                    image_url=product_data.get("image_url"),
-                    scraped_at=datetime.utcnow(),
-                    scraper_run_id=run_id
-                )
-                db.add(history_entry)
+                except Exception as e:
+                    logger.error(f"Error saving product {sku}: {str(e)}")
+                    db.rollback()
+                    raise
             
+            # Commit all products in batch
             db.commit()
-            logger.info(f"Saved products to database: {stats}")
+            logger.info(f"Successfully saved {stats['new_products']} new and {stats['updated_products']} updated products")
             
         except Exception as e:
-            logger.error(f"Error saving products: {str(e)}")
+            logger.error(f"Error saving products to database: {str(e)}")
             db.rollback()
             raise
         finally:

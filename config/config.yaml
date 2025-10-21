@@ -16,13 +16,13 @@ scraper:
     requests_per_minute: 30
   
   selectors:
-    product_card: ".product-grid-box"
-    product_name: ".product-grid-box__title"
-    product_price: ".price"
-    product_discount: ".product-ribbon"
-    product_image: ".product-grid-box__image img"
-    product_sku: "[data-sku]"
-    pagination_next: ".pagination__next"
+    product_card: ".odsc-tile"  # Product tile in Lidl search results
+    product_name: ".odsc-tile__link"  # Product name/link
+    product_price: ".odsc-tile__price, .price"  # Price element
+    product_discount: ".odsc-tile__discount, .product-ribbon"  # Discount badge
+    product_image: ".odsc-tile__image img"  # Product image
+    product_sku: "[data-sku]"  # SKU attribute
+    pagination_next: ".s-load-more__button"  # Load more button
   
   fields:
     - name: "product_name"

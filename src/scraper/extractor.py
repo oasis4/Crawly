@@ -2,6 +2,9 @@
 
 from typing import List, Dict, Any, Optional
 from bs4 import BeautifulSoup
+import json
+import re
+import urllib.parse
 
 from src.utils.logger import get_logger
 from src.utils.validators import validate_price, clean_text, extract_sku
@@ -13,7 +16,7 @@ logger = get_logger(__name__)
 class ProductExtractor:
     """
     Extracts structured product data from HTML.
-    Uses CSS selectors and data cleaning/validation.
+    Optimized for Lidl's product grid with JSON data in attributes.
     """
     
     def __init__(self):
@@ -26,6 +29,7 @@ class ProductExtractor:
     def extract_products(self, html: str) -> List[Dict[str, Any]]:
         """
         Extract all products from HTML page.
+        Uses data-gridbox-impression JSON attribute for faster extraction.
         
         Args:
             html: Page HTML content
@@ -36,10 +40,15 @@ class ProductExtractor:
         soup = BeautifulSoup(html, 'lxml')
         products = []
         
-        # Find all product cards
-        product_cards = soup.select(self.selectors.get("product_card", ".product-grid-box"))
+        # Find all product cards with data-gridbox-impression attribute
+        product_cards = soup.select("[data-gridbox-impression]")
         
-        logger.info(f"Found {len(product_cards)} product cards")
+        logger.info(f"Found {len(product_cards)} product cards with JSON data")
+        
+        if len(product_cards) == 0:
+            # Fallback to old method if JSON not available
+            logger.warning("No JSON data found, falling back to CSS selectors")
+            product_cards = soup.select(self.selectors.get("product_card", ".odsc-tile"))
         
         for idx, card in enumerate(product_cards):
             try:
@@ -57,6 +66,7 @@ class ProductExtractor:
     def _extract_product_from_card(self, card: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """
         Extract product data from a single product card.
+        Tries JSON extraction first, then falls back to CSS selectors.
         
         Args:
             card: BeautifulSoup element for product card
@@ -65,6 +75,65 @@ class ProductExtractor:
             Product dictionary or None
         """
         product = {}
+        
+        # Try to extract from JSON data attribute first
+        json_data = card.get("data-gridbox-impression")
+        if json_data:
+            try:
+                # URL-decode the JSON data first
+                decoded_json = urllib.parse.unquote(json_data)
+                data = json.loads(decoded_json)
+                product_name = data.get("name", "")
+                price = data.get("price")
+                original_price = data.get("originalPrice") or data.get("original_price")  # Fallback names
+                lidl_product_id = data.get("id", "")
+                
+                logger.debug(f"Extracted JSON: name={product_name}, price={price}, original_price={original_price}, id={lidl_product_id}")
+                
+                # Convert price to float
+                if price is not None:
+                    try:
+                        price = float(price)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Failed to convert price to float: {price}")
+                        price = 0
+                else:
+                    logger.warning("Price is None in JSON data")
+                    price = 0
+                
+                # Convert original price to float
+                if original_price is not None:
+                    try:
+                        original_price = float(original_price)
+                    except (ValueError, TypeError):
+                        logger.warning(f"Failed to convert original_price to float: {original_price}")
+                        original_price = None
+                else:
+                    original_price = None
+                
+                # Generate SKU from Lidl product ID
+                sku = f"LIDL-{lidl_product_id}" if lidl_product_id else None
+                
+                # Normalize product name to ensure UTF-8 compliance
+                product_name = product_name.encode('utf-8', errors='replace').decode('utf-8') if product_name else ""
+                
+                product = {
+                    "product_name": product_name,
+                    "price": price,
+                    "original_price": original_price,
+                    "sku": sku,
+                    "lidl_product_id": str(lidl_product_id) if lidl_product_id else None,
+                    "discount": None,
+                    "image_url": None,
+                }
+                
+                return product if product.get("product_name") else None
+                
+            except json.JSONDecodeError as e:
+                logger.debug(f"Failed to parse JSON data: {str(e)}")
+        
+        # Fallback to CSS selector extraction
+        logger.debug("Falling back to CSS selector extraction")
         
         # Extract each configured field
         for field_config in self.fields:
@@ -167,14 +236,11 @@ class ProductExtractor:
             logger.debug("Product missing name")
             return False
         
-        if not product.get("price") or product.get("price") <= 0:
+        if product.get("price") is None or product.get("price") <= 0:
             logger.debug("Product missing valid price")
             return False
         
-        if not product.get("sku"):
-            logger.debug("Product missing SKU")
-            return False
-        
+        # SKU will be auto-generated if not present
         return True
     
     def extract_pagination_info(self, html: str) -> Dict[str, Any]:
@@ -195,16 +261,11 @@ class ProductExtractor:
             "total_pages": 1
         }
         
-        # Check for next button
-        next_button = soup.select_one(self.selectors.get("pagination_next", ".pagination__next"))
-        info["has_next"] = next_button is not None
+        # Check for "Weitere Produkte laden" button
+        load_more_button = soup.select_one(".s-load-more__button")
+        info["has_next"] = load_more_button is not None
         
-        # Try to extract current page number
-        current_page_elem = soup.select_one(".pagination__current, .pagination .active")
-        if current_page_elem:
-            try:
-                info["current_page"] = int(current_page_elem.get_text().strip())
-            except:
-                pass
+        if load_more_button:
+            logger.debug("Found 'Weitere Produkte laden' button")
         
         return info

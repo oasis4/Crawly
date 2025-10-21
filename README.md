@@ -84,6 +84,11 @@ cd Crawly
 2. **Install dependencies**
 ```bash
 pip install -r requirements.txt
+```
+
+Or install all packages individually:
+```bash
+pip install playwright==1.40.0 beautifulsoup4==4.12.2 lxml==4.9.3 selenium==4.15.2 fastapi==0.104.1 uvicorn[standard]==0.24.0 pydantic==2.5.0 pydantic-settings==2.1.0 sqlalchemy==2.0.23 psycopg2-binary==2.9.10 alembic==1.12.1 pandas==2.1.3 numpy==1.26.2 httpx==0.25.1 requests==2.31.0 python-dotenv==1.0.0 pyyaml==6.0.1 python-json-logger==2.0.7 structlog==23.2.0 tenacity==8.2.3 fake-useragent==1.4.0 schedule==1.2.0 pytest==7.4.3 pytest-asyncio==0.21.1
 playwright install chromium
 ```
 

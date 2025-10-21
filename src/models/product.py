@@ -16,8 +16,10 @@ class Product(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     sku = Column(String(100), unique=True, index=True, nullable=False)
+    lidl_product_id = Column(String(50), index=True, nullable=True)  # Lidl product number from JSON
     name = Column(String(500), nullable=False)
-    price = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)  # Current/sale price
+    original_price = Column(Float, nullable=True)  # UVP/old price
     currency = Column(String(3), default="EUR")
     discount = Column(String(100), nullable=True)
     image_url = Column(Text, nullable=True)
@@ -46,8 +48,10 @@ class ProductHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, ForeignKey("products.id"), nullable=False)
     sku = Column(String(100), index=True, nullable=False)
+    lidl_product_id = Column(String(50), index=True, nullable=True)  # Lidl product number
     name = Column(String(500), nullable=False)
-    price = Column(Float, nullable=False)
+    price = Column(Float, nullable=False)  # Current/sale price
+    original_price = Column(Float, nullable=True)  # UVP/old price
     currency = Column(String(3), default="EUR")
     discount = Column(String(100), nullable=True)
     image_url = Column(Text, nullable=True)
