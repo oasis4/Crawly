@@ -1,0 +1,102 @@
+scraper:
+  target_url: "https://www.lidl.de"
+  navigation:
+    wait_timeout: 30
+    page_load_timeout: 60
+    scroll_pause: 2
+  
+  retry:
+    max_attempts: 3
+    backoff_factor: 2
+    max_delay: 60
+  
+  throttling:
+    min_delay: 1.0
+    max_delay: 3.0
+    requests_per_minute: 30
+  
+  selectors:
+    product_card: ".product-grid-box"
+    product_name: ".product-grid-box__title"
+    product_price: ".price"
+    product_discount: ".product-ribbon"
+    product_image: ".product-grid-box__image img"
+    product_sku: "[data-sku]"
+    pagination_next: ".pagination__next"
+  
+  fields:
+    - name: "product_name"
+      selector: ".product-grid-box__title"
+      required: true
+      type: "text"
+    - name: "price"
+      selector: ".price"
+      required: true
+      type: "price"
+    - name: "discount"
+      selector: ".product-ribbon"
+      required: false
+      type: "text"
+    - name: "image_url"
+      selector: ".product-grid-box__image img"
+      required: false
+      type: "attribute"
+      attribute: "src"
+    - name: "sku"
+      selector: "[data-sku]"
+      required: false
+      type: "attribute"
+      attribute: "data-sku"
+
+database:
+  pool_size: 10
+  max_overflow: 20
+  pool_timeout: 30
+  pool_recycle: 3600
+
+api:
+  title: "Crawly - Lidl Product Data API"
+  description: "API for accessing scraped Lidl product data"
+  version: "1.0.0"
+  docs_url: "/docs"
+  redoc_url: "/redoc"
+  
+  cors:
+    enabled: true
+    origins:
+      - "http://localhost:3000"
+      - "http://localhost:8080"
+    allow_credentials: true
+    allow_methods: ["*"]
+    allow_headers: ["*"]
+
+logging:
+  version: 1
+  formatters:
+    standard:
+      format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    json:
+      class: "pythonjsonlogger.jsonlogger.JsonFormatter"
+  
+  handlers:
+    console:
+      class: "logging.StreamHandler"
+      formatter: "standard"
+      stream: "ext://sys.stdout"
+    
+    file:
+      class: "logging.handlers.RotatingFileHandler"
+      formatter: "json"
+      filename: "logs/crawly.log"
+      maxBytes: 10485760  # 10MB
+      backupCount: 5
+  
+  loggers:
+    crawly:
+      level: "INFO"
+      handlers: ["console", "file"]
+      propagate: false
+  
+  root:
+    level: "INFO"
+    handlers: ["console"]
