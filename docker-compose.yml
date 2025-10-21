@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: crawly-postgres
+    environment:
+      POSTGRES_DB: crawly_db
+      POSTGRES_USER: crawly_user
+      POSTGRES_PASSWORD: crawly_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U crawly_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build: .
+    container_name: crawly-api
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://crawly_user:crawly_password@postgres:5432/crawly_db
+      ENVIRONMENT: production
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: uvicorn src.api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  scraper:
+    build: .
+    container_name: crawly-scraper
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://crawly_user:crawly_password@postgres:5432/crawly_db
+      ENVIRONMENT: production
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    command: python -m src.scraper.scheduler
+
+volumes:
+  postgres_data:
