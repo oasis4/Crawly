@@ -14,12 +14,15 @@ class ProductResponse(BaseModel):
     sku: str
     name: str
     price: float
+    original_price: Optional[float] = None
     currency: str = "EUR"
     discount: Optional[str] = None
     image_url: Optional[str] = None
     product_url: Optional[str] = None
     category: Optional[str] = None
-    availability: bool = True
+    brand: Optional[str] = None
+    rating: Optional[float] = None
+    availability: str = "available"
     first_seen: datetime
     last_updated: datetime
     last_scraped: datetime
@@ -35,9 +38,13 @@ class ProductHistoryResponse(BaseModel):
     sku: str
     name: str
     price: float
+    original_price: Optional[float] = None
     currency: str = "EUR"
     discount: Optional[str] = None
-    availability: bool = True
+    category: Optional[str] = None
+    brand: Optional[str] = None
+    rating: Optional[float] = None
+    availability: str = "available"
     scraped_at: datetime
 
 

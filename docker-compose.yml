@@ -25,7 +25,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8000:8000"
+      - "8001:8000"
     environment:
       DATABASE_URL: postgresql://crawly_user:crawly_password@postgres:5432/crawly_db
       ENVIRONMENT: production
@@ -48,5 +48,19 @@ services:
       - ./logs:/app/logs
     command: python -m src.scraper.scheduler
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: crawly-pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@example.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
 volumes:
   postgres_data:
+  pgadmin_data:

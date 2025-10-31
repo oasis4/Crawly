@@ -87,8 +87,12 @@ class ProductExtractor:
                 price = data.get("price")
                 original_price = data.get("originalPrice") or data.get("original_price")  # Fallback names
                 lidl_product_id = data.get("id", "")
+                brand = data.get("brand", "")
+                category = data.get("category", "")
+                rating = data.get("ratingAverage")
+                availability = data.get("availability", "unknown")
                 
-                logger.debug(f"Extracted JSON: name={product_name}, price={price}, original_price={original_price}, id={lidl_product_id}")
+                logger.debug(f"Extracted JSON: name={product_name}, price={price}, brand={brand}")
                 
                 # Convert price to float
                 if price is not None:
@@ -111,6 +115,35 @@ class ProductExtractor:
                 else:
                     original_price = None
                 
+                # Extract first image URL
+                image_url = None
+                img_tags = card.find_all("img", class_="odsc-image-gallery__image")
+                if img_tags:
+                    image_url = img_tags[0].get("src")
+                
+                # Extract product URL
+                product_url = None
+                link = card.find("a", class_="odsc-tile__link")
+                if link and link.get("href"):
+                    product_url = "https://www.lidl.de" + link.get("href").split("#")[0]
+                
+                # Extract discount percentage from price display
+                discount = None
+                discount_elem = card.find("span", class_="ods-price__box-content-text-el")
+                if discount_elem:
+                    discount = discount_elem.get_text(strip=True)
+                
+                # Calculate original price from discount if not provided
+                if original_price is None and discount and price:
+                    # Try to parse discount like "-22%" or "Billiger"
+                    if discount.startswith("-"):
+                        try:
+                            discount_percent = float(discount.replace("%", "").replace("-", "")) / 100
+                            if discount_percent > 0 and discount_percent < 1:
+                                original_price = price / (1 - discount_percent)
+                        except (ValueError, ZeroDivisionError):
+                            pass
+                
                 # Generate SKU from Lidl product ID
                 sku = f"LIDL-{lidl_product_id}" if lidl_product_id else None
                 
@@ -123,8 +156,13 @@ class ProductExtractor:
                     "original_price": original_price,
                     "sku": sku,
                     "lidl_product_id": str(lidl_product_id) if lidl_product_id else None,
-                    "discount": None,
-                    "image_url": None,
+                    "discount": discount,
+                    "image_url": image_url,
+                    "product_url": product_url,
+                    "category": category,
+                    "brand": brand,
+                    "rating": rating,
+                    "availability": availability,
                 }
                 
                 return product if product.get("product_name") else None

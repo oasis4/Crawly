@@ -25,8 +25,10 @@ class Product(Base):
     image_url = Column(Text, nullable=True)
     product_url = Column(Text, nullable=True)
     category = Column(String(200), nullable=True)
+    brand = Column(String(100), nullable=True)
+    rating = Column(Float, nullable=True)  # Average rating (e.g., 3.7)
     description = Column(Text, nullable=True)
-    availability = Column(Boolean, default=True)
+    availability = Column(String(50), default="unknown", nullable=True)  # e.g., "available", "out_of_stock"
     
     # Metadata
     first_seen = Column(DateTime, default=datetime.utcnow)
@@ -57,7 +59,9 @@ class ProductHistory(Base):
     image_url = Column(Text, nullable=True)
     product_url = Column(Text, nullable=True)
     category = Column(String(200), nullable=True)
-    availability = Column(Boolean, default=True)
+    brand = Column(String(100), nullable=True)
+    rating = Column(Float, nullable=True)
+    availability = Column(String(50), default="unknown", nullable=True)
     
     # Tracking
     scraped_at = Column(DateTime, default=datetime.utcnow, index=True)

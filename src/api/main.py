@@ -3,6 +3,7 @@
 from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from typing import List, Optional
 from datetime import datetime, timedelta
 
@@ -258,9 +259,7 @@ async def get_stats(db: Session = Depends(get_db)):
         Product.discount.isnot(None)
     ).count()
     
-    avg_price = db.query(Product).with_entities(
-        db.func.avg(Product.price)
-    ).scalar() or 0.0
+    avg_price = db.query(func.avg(Product.price)).scalar() or 0.0
     
     last_run = db.query(ScraperRun).order_by(
         ScraperRun.start_time.desc()

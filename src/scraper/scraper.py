@@ -251,6 +251,11 @@ class LidlScraper:
                         existing_product.lidl_product_id = product_data.get("lidl_product_id")
                         existing_product.discount = product_data.get("discount")
                         existing_product.image_url = product_data.get("image_url")
+                        existing_product.product_url = product_data.get("product_url")
+                        existing_product.category = product_data.get("category")
+                        existing_product.brand = product_data.get("brand")
+                        existing_product.rating = product_data.get("rating")
+                        existing_product.availability = product_data.get("availability")
                         existing_product.last_scraped = datetime.utcnow()
                         existing_product.last_updated = datetime.utcnow()
                         
@@ -268,6 +273,11 @@ class LidlScraper:
                             lidl_product_id=product_data.get("lidl_product_id"),
                             discount=product_data.get("discount"),
                             image_url=product_data.get("image_url"),
+                            product_url=product_data.get("product_url"),
+                            category=product_data.get("category"),
+                            brand=product_data.get("brand"),
+                            rating=product_data.get("rating"),
+                            availability=product_data.get("availability"),
                             first_seen=datetime.utcnow(),
                             last_scraped=datetime.utcnow()
                         )
@@ -288,6 +298,11 @@ class LidlScraper:
                         original_price=product_data.get("original_price"),
                         discount=product_data.get("discount"),
                         image_url=product_data.get("image_url"),
+                        product_url=product_data.get("product_url"),
+                        category=product_data.get("category"),
+                        brand=product_data.get("brand"),
+                        rating=product_data.get("rating"),
+                        availability=product_data.get("availability"),
                         scraped_at=datetime.utcnow(),
                         scraper_run_id=run_id
                     )
