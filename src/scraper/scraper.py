@@ -7,7 +7,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_excep
 
 from src.scraper.crawler import LidlCrawler
 from src.scraper.extractor import ProductExtractor
-from src.database.connection import SessionLocal
+from src.database.connection import LidlSessionLocal
 from src.models.product import Product, ProductHistory, ScraperRun
 from src.utils.logger import get_logger
 from src.utils.config_loader import get_config
@@ -51,7 +51,7 @@ class LidlScraper:
             Dictionary with scraping statistics
         """
         # Initialize scraper run
-        db = SessionLocal()
+        db = LidlSessionLocal()
         self.scraper_run = ScraperRun(
             start_time=datetime.utcnow(),
             status="running"
@@ -109,6 +109,8 @@ class LidlScraper:
                     logger.warning("Could not click on category, proceeding with main page products")
                 
                 page_count = 0
+                total_new = 0
+                total_updated = 0
                 
                 while True:
                     page_count += 1
@@ -125,6 +127,14 @@ class LidlScraper:
                     all_products.extend(products)
                     
                     logger.info(f"Extracted {len(products)} products from page {page_count}")
+                    
+                    # 🔥 SAVE PRODUCTS IMMEDIATELY AFTER EACH PAGE
+                    if products:
+                        logger.info(f"💾 Saving {len(products)} products from page {page_count} to database...")
+                        page_stats = self._save_products(products, run_id)
+                        total_new += page_stats["new_products"]
+                        total_updated += page_stats["updated_products"]
+                        logger.info(f"✅ Page {page_count}: {page_stats['new_products']} new, {page_stats['updated_products']} updated")
                     
                     # Check pagination
                     pagination_info = self.extractor.extract_pagination_info(html)
@@ -153,11 +163,16 @@ class LidlScraper:
                         logger.info("No more 'Weitere Produkte laden' button found")
                         break
             
-            # Save products to database
-            stats = self._save_products(all_products, run_id)
+            # Final stats compilation
+            stats = {
+                "total_products": len(all_products),
+                "new_products": total_new,
+                "updated_products": total_updated,
+                "skipped_products": 0
+            }
             
             # Update scraper run
-            db = SessionLocal()
+            db = LidlSessionLocal()
             scraper_run = db.query(ScraperRun).filter(ScraperRun.id == run_id).first()
             if scraper_run:
                 scraper_run.end_time = datetime.utcnow()
@@ -187,7 +202,7 @@ class LidlScraper:
                     logger.error(f"Failed to save products: {str(save_error)}")
             
             # Update scraper run status
-            db = SessionLocal()
+            db = LidlSessionLocal()
             scraper_run = db.query(ScraperRun).filter(ScraperRun.id == run_id).first()
             if scraper_run:
                 scraper_run.end_time = datetime.utcnow()
@@ -200,7 +215,8 @@ class LidlScraper:
     
     def _save_products(self, products: List[Dict[str, Any]], run_id: int) -> Dict[str, int]:
         """
-        Save products to database and track changes.
+        Save products to database with deduplication and change tracking.
+        Writes to LIDL_DB.
         
         Args:
             products: List of product dictionaries
@@ -209,12 +225,13 @@ class LidlScraper:
         Returns:
             Statistics dictionary
         """
-        db = SessionLocal()
+        db = LidlSessionLocal()
         stats = {
             "total_products": len(products),
             "new_products": 0,
             "updated_products": 0,
-            "skipped_products": 0
+            "skipped_products": 0,
+            "duplicates_skipped": 0
         }
         
         if not products:
@@ -223,6 +240,9 @@ class LidlScraper:
             return stats
         
         logger.info(f"Attempting to save {len(products)} products to database")
+        
+        # Track SKUs we've seen in THIS batch to avoid duplicates within the page
+        seen_skus_in_batch = set()
         
         try:
             for product_data in products:
@@ -233,18 +253,34 @@ class LidlScraper:
                     stats["skipped_products"] += 1
                     continue
                 
+                # Check if duplicate within this batch
+                if sku in seen_skus_in_batch:
+                    logger.warning(f"Duplicate SKU in batch: {sku}, skipping")
+                    stats["duplicates_skipped"] += 1
+                    continue
+                
+                seen_skus_in_batch.add(sku)
+                
                 # Ensure all strings are properly encoded
                 product_name = product_data.get("product_name", "")
                 if isinstance(product_name, str):
                     # Encode and decode to ensure UTF-8 compliance
                     product_name = product_name.encode('utf-8', errors='replace').decode('utf-8')
                 
-                # Check if product exists
+                # Check if product exists in DB
                 existing_product = db.query(Product).filter(Product.sku == sku).first()
                 
                 try:
                     if existing_product:
+                        # Track if anything changed
+                        price_changed = existing_product.price != product_data.get("price")
+                        discount_changed = existing_product.discount != product_data.get("discount")
+                        availability_changed = existing_product.availability != product_data.get("availability")
+                        
                         # Update existing product
+                        old_price = existing_product.price
+                        old_discount = existing_product.discount
+                        
                         existing_product.name = product_name or existing_product.name
                         existing_product.price = product_data.get("price", existing_product.price)
                         existing_product.original_price = product_data.get("original_price")
@@ -261,7 +297,12 @@ class LidlScraper:
                         
                         product_id = existing_product.id
                         stats["updated_products"] += 1
-                        logger.debug(f"Updated product: {sku}")
+                        
+                        # Log changes for tracking
+                        if price_changed or discount_changed or availability_changed:
+                            logger.info(f"Updated {sku}: Price {old_price}→{product_data.get('price')}, Discount {old_discount}→{product_data.get('discount')}")
+                        else:
+                            logger.debug(f"Updated (no changes) product: {sku}")
                         
                     else:
                         # Create new product
@@ -286,9 +327,9 @@ class LidlScraper:
                         
                         product_id = new_product.id
                         stats["new_products"] += 1
-                        logger.debug(f"Created new product: {sku}")
+                        logger.debug(f"Created new product: {sku} - {product_name[:50]}")
                     
-                    # Add to history
+                    # Add to history (always track, even if unchanged)
                     history_entry = ProductHistory(
                         product_id=product_id,
                         sku=sku,
@@ -315,7 +356,7 @@ class LidlScraper:
             
             # Commit all products in batch
             db.commit()
-            logger.info(f"Successfully saved {stats['new_products']} new and {stats['updated_products']} updated products")
+            logger.info(f"✅ Saved {stats['new_products']} new, {stats['updated_products']} updated, {stats['duplicates_skipped']} duplicates skipped")
             
         except Exception as e:
             logger.error(f"Error saving products to database: {str(e)}")

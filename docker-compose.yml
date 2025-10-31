@@ -1,33 +1,49 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: crawly-postgres
+  mysql:
+    image: mysql:8.0
+    container_name: crawly-mysql
     environment:
-      POSTGRES_DB: crawly_db
-      POSTGRES_USER: crawly_user
-      POSTGRES_PASSWORD: crawly_password
+      MYSQL_DATABASE: crawly_db
+      MYSQL_USER: crawly_user
+      MYSQL_PASSWORD: crawly_password
+      MYSQL_ROOT_PASSWORD: root_password
     ports:
-      - "5432:5432"
+      - "3306:3306"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - mysql_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U crawly_user"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
       retries: 5
+
+  phpmyadmin:
+    image: phpmyadmin:latest
+    container_name: crawly-phpmyadmin
+    environment:
+      PMA_HOST: mysql
+      PMA_USER: crawly_user
+      PMA_PASSWORD: crawly_password
+      PMA_ROOT_PASSWORD: root_password
+    ports:
+      - "8080:80"
+    depends_on:
+      - mysql
 
   api:
     build: .
     container_name: crawly-api
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     ports:
       - "8001:8000"
     environment:
-      DATABASE_URL: postgresql://crawly_user:crawly_password@postgres:5432/crawly_db
+      MASTER_DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_db
+      LIDL_DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_lidl_db
+      DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_db
       ENVIRONMENT: production
     volumes:
       - ./data:/app/data
@@ -38,29 +54,17 @@ services:
     build: .
     container_name: crawly-scraper
     depends_on:
-      postgres:
+      mysql:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://crawly_user:crawly_password@postgres:5432/crawly_db
+      MASTER_DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_db
+      LIDL_DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_lidl_db
+      DATABASE_URL: mysql+pymysql://crawly_user:crawly_password@mysql:3306/crawly_lidl_db
       ENVIRONMENT: production
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     command: python -m src.scraper.scheduler
 
-  pgadmin:
-    image: dpage/pgadmin4:latest
-    container_name: crawly-pgadmin
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@example.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    depends_on:
-      - postgres
-    volumes:
-      - pgadmin_data:/var/lib/pgadmin
-
 volumes:
-  postgres_data:
-  pgadmin_data:
+  mysql_data:
